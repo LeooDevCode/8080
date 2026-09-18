@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>8080 + FPU · Simulador didáctico</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0d1013; --panel:#171b20; --panel-2:#1c2027; --line:#262b32; --line-soft:#1f242b;
+  --text:#e8e6df; --text-dim:#8b929c; --text-faint:#565d67;
+  --cpu:#f2a900; --cpu-dim:#5a4520;
+  --fpu:#43d9ff; --fpu-dim:#1c4a58;
+  --ok:#5ee68a; --warn:#ff8a3d; --danger:#ff5f56;
+  --mono:'IBM Plex Mono', ui-monospace, monospace;
+  --sans:'IBM Plex Sans', system-ui, sans-serif;
+  color-scheme: dark;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+body{line-height:1.5;}
+::selection{background:var(--cpu);color:#1a1400;}
+a{color:var(--fpu);}
+.wrap{max-width:1320px;margin:0 auto;padding:0 24px;}
+
+/* ---------- hero ---------- */
+.hero{border-bottom:1px solid var(--line);padding:52px 0 34px;position:relative;overflow:hidden;}
+.hero::before{content:"";position:absolute;inset:0;background:
+  repeating-linear-gradient(90deg, rgba(242,169,0,.035) 0 1px, transparent 1px 64px);
+  pointer-events:none;}
+h1{font-family:var(--sans);font-weight:600;font-size:clamp(28px,4vw,44px);letter-spacing:-0.02em;margin:0 0 10px;}
+h1 .amber{color:var(--cpu);} h1 .cyan{color:var(--fpu);}
+.hero p.lede{max-width:640px;color:var(--text-dim);font-size:16px;margin:0;}
+
+/* ---------- layout ---------- */
+main{padding:36px 0 60px;}
+.bench{display:grid;grid-template-columns:1.15fr 0.85fr;gap:20px;align-items:start;}
+@media (max-width:980px){.bench{grid-template-columns:1fr;}}
+
+.panel{background:var(--panel);border:1px solid var(--line);position:relative;}
+.panel::before,.panel::after{content:"";position:absolute;width:5px;height:5px;background:var(--line);top:-1px;}
+.panel::before{left:14px;} .panel::after{right:14px;}
+.panel-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel-2);}
+.panel-head h2{font-family:var(--mono);font-size:12px;letter-spacing:.04em;margin:0;color:var(--text-dim);font-weight:500;}
+.panel-head h2 b{color:var(--text);}
+.tag{font-family:var(--mono);font-size:10.5px;padding:2px 6px;border:1px solid var(--line);color:var(--text-faint);}
+.tag.cpu{color:var(--cpu);border-color:var(--cpu-dim);}
+.tag.fpu{color:var(--fpu);border-color:var(--fpu-dim);}
+.panel-body{padding:14px;}
+
+/* ---------- editor / controls ---------- */
+.stack-col{display:flex;flex-direction:column;gap:18px;}
+textarea#editor{width:100%;height:360px;resize:vertical;background:#0f1216;color:var(--text);
+  border:1px solid var(--line-soft);font-family:var(--mono);font-size:13px;line-height:1.55;padding:12px;
+  tab-size:4;}
+textarea#editor:focus{outline:1px solid var(--cpu);}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px;border-top:1px solid var(--line);background:var(--panel-2);}
+button{font-family:var(--sans);font-size:13px;font-weight:500;border:1px solid var(--line);background:#1b2027;
+  color:var(--text);padding:8px 13px;cursor:pointer;transition:border-color .12s,color .12s;}
+button:hover{border-color:var(--text-faint);}
+button:disabled{opacity:.4;cursor:not-allowed;}
+button.primary{background:var(--cpu);border-color:var(--cpu);color:#1a1400;font-weight:600;}
+button.primary:hover{background:#ffb81c;}
+button.accent{border-color:var(--fpu-dim);color:var(--fpu);}
+button.accent:hover{border-color:var(--fpu);}
+button.danger{color:var(--danger);}
+select{font-family:var(--sans);font-size:13px;background:#1b2027;color:var(--text);border:1px solid var(--line);padding:7px 10px;}
+.speed{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-left:auto;}
+input[type=range]{accent-color:var(--cpu);}
+
+/* console */
+#console{height:150px;overflow-y:auto;background:#0a0c0e;font-family:var(--mono);font-size:12px;padding:10px 12px;
+  border-top:1px solid var(--line);color:var(--text-dim);}
+#console div{white-space:pre-wrap;}
+#console .op-fpu{color:var(--fpu);}
+#console .op-err{color:var(--danger);}
+#console .op-sys{color:var(--text-faint);}
+
+/* ---------- registers ---------- */
+.reg-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.reg{border:1px solid var(--line-soft);background:#12151a;padding:7px 9px;text-align:center;}
+.reg .name{font-family:var(--mono);font-size:10.5px;color:var(--text-faint);letter-spacing:.05em;}
+.reg .val{font-family:var(--mono);font-size:17px;font-weight:600;color:var(--cpu);margin-top:2px;}
+.reg.wide{grid-column:span 2;}
+
+.flags-row{display:flex;gap:6px;margin-top:12px;}
+.flag{flex:1;border:1px solid var(--line-soft);background:#12151a;text-align:center;padding:8px 4px;position:relative;cursor:default;}
+.flag .name{font-family:var(--mono);font-size:11px;color:var(--text-faint);}
+.flag .val{font-family:var(--mono);font-size:15px;font-weight:700;margin-top:2px;color:#3a4048;}
+.flag.set .val{color:var(--cpu);}
+.flag.set{border-color:var(--cpu-dim);}
+.flag .tip{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);width:190px;
+  background:#0a0c0e;border:1px solid var(--line);color:var(--text-dim);font-family:var(--sans);font-size:11.5px;
+  padding:8px 9px;opacity:0;pointer-events:none;transition:opacity .12s;z-index:5;text-align:left;line-height:1.4;}
+.flag:hover .tip{opacity:1;}
+
+.cpu-state{display:flex;gap:8px;margin-top:12px;font-family:var(--mono);font-size:11.5px;}
+.pill{border:1px solid var(--line-soft);padding:5px 9px;color:var(--text-dim);}
+.pill.run{color:var(--ok);border-color:#1e4a30;}
+.pill.halt{color:var(--danger);border-color:#4a1e1e;}
+
+/* ---------- memory ---------- */
+.mem-controls{display:flex;gap:8px;margin-bottom:10px;}
+.mem-controls input{font-family:var(--mono);background:#0f1216;border:1px solid var(--line-soft);color:var(--text);
+  padding:6px 8px;font-size:12px;width:100px;}
+#memview{font-family:var(--mono);font-size:11px;line-height:1.9;overflow-x:auto;color:var(--text-dim);}
+#memview table{border-collapse:collapse;width:100%;}
+#memview td{padding:0 4px;text-align:center;}
+#memview td.addr{color:var(--text-faint);text-align:left;padding-right:10px;}
+#memview td.byte{color:var(--text-dim);}
+#memview td.byte.pc{background:var(--cpu);color:#1a1400;font-weight:700;}
+#memview td.byte.sp{outline:1px solid var(--fpu);color:var(--fpu);}
+#memview td.byte.nz{color:var(--text);}
+
+/* ---------- stack view ---------- */
+#stackview{font-family:var(--mono);font-size:12px;}
+#stackview .row{display:flex;justify-content:space-between;padding:4px 6px;border-bottom:1px solid var(--line-soft);}
+#stackview .row.sp{background:rgba(67,217,255,.08);color:var(--fpu);}
+#stackview .row span.a{color:var(--text-faint);}
+
+/* ---------- FPU panel ---------- */
+.fpu-panel .panel-head{border-bottom-color:var(--fpu-dim);}
+.st-stack{display:flex;flex-direction:column;gap:5px;}
+.st-reg{display:flex;align-items:center;gap:10px;border:1px solid var(--line-soft);background:#12151a;padding:6px 9px;}
+.st-reg.top{border-color:var(--fpu-dim);background:rgba(67,217,255,.06);}
+.st-reg .idx{font-family:var(--mono);font-size:11px;color:var(--text-faint);width:34px;}
+.st-reg .v{font-family:var(--mono);font-size:13.5px;color:var(--fpu);flex:1;text-align:right;}
+.st-reg.empty .v{color:var(--text-faint);}
+.fpu-flags{display:flex;gap:6px;margin-top:12px;font-family:var(--mono);font-size:11px;}
+.fpu-flags .f{flex:1;text-align:center;border:1px solid var(--line-soft);padding:5px 2px;color:var(--text-faint);}
+.fpu-flags .f.set{color:var(--fpu);border-color:var(--fpu-dim);}
+.fpu-last{margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--text-dim);}
+.fpu-last b{color:var(--fpu);}
+
+
+
+footer{border-top:1px solid var(--line);padding:26px 0;color:var(--text-faint);font-size:12.5px;font-family:var(--mono);}
+footer a{color:var(--text-faint);}
+
+@media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Simulador <span class="amber">Intel 8080</span> con coprocesador <span class="cyan">de punto flotante</span></h1>
+    <p class="lede">Fork del emulador y ensamblador 8080, con un coprocesador extra para punto flotante (parecido en concepto al 8087). Se comunica con la CPU usando los opcodes que en el 8080 real no están documentados.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="bench">
+
+    <!-- LEFT COLUMN: editor + console -->
+    <div class="stack-col">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>ENSAMBLADOR · <b>editor.asm</b></h2>
+          <select id="exampleSelect">
+            <option value="fpu_circulo">FPU · Área de un círculo</option>
+            <option value="fpu_promedio">FPU · Promedio de 3 números</option>
+            <option value="fpu_pitagoras">FPU · Hipotenusa (Pitágoras)</option>
+            <option value="cpu_bucle">CPU · Bucle y suma (sin FPU)</option>
+            <option value="cpu_daa">CPU · Suma BCD con DAA</option>
+          </select>
+        </div>
+        <textarea id="editor" spellcheck="false"></textarea>
+        <div class="toolbar">
+          <button class="primary" id="btnAssemble">Assemble &amp; Load</button>
+          <button id="btnRun">Run</button>
+          <button id="btnStep">Step</button>
+          <button id="btnPause">Pause</button>
+          <button id="btnReset">Reset CPU</button>
+          <button class="danger" id="btnClear">Clear Code</button>
+          <div class="speed">
+            <span>Velocidad</span>
+            <input type="range" id="speedRange" min="1" max="500" value="60">
+          </div>
+        </div>
+        <div id="console"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: hardware panels -->
+    <div class="stack-col">
+
+      <div class="panel">
+        <div class="panel-head"><h2>CPU · <b>registros y banderas</b></h2><span class="tag cpu">8080</span></div>
+        <div class="panel-body">
+          <div class="reg-grid">
+            <div class="reg"><div class="name">A</div><div class="val" id="regA">00</div></div>
+            <div class="reg"><div class="name">B</div><div class="val" id="regB">00</div></div>
+            <div class="reg"><div class="name">C</div><div class="val" id="regC">00</div></div>
+            <div class="reg"><div class="name">D</div><div class="val" id="regD">00</div></div>
+            <div class="reg"><div class="name">E</div><div class="val" id="regE">00</div></div>
+            <div class="reg"><div class="name">H</div><div class="val" id="regH">00</div></div>
+            <div class="reg"><div class="name">L</div><div class="val" id="regL">00</div></div>
+            <div class="reg"><div class="name">F</div><div class="val" id="regF">02</div></div>
+            <div class="reg wide"><div class="name">PC</div><div class="val" id="regPC">0000</div></div>
+            <div class="reg wide"><div class="name">SP</div><div class="val" id="regSP">FFFF</div></div>
+          </div>
+          <div class="flags-row">
+            <div class="flag" id="flagS"><div class="name">S</div><div class="val">0</div><div class="tip">Sign — se activa cuando el bit más significativo (bit 7) del resultado es 1, es decir, cuando el resultado se interpreta como negativo.</div></div>
+            <div class="flag" id="flagZ"><div class="name">Z</div><div class="val">0</div><div class="tip">Zero — se activa cuando el resultado de la operación es exactamente 0x00.</div></div>
+            <div class="flag" id="flagAC"><div class="name">AC</div><div class="val">0</div><div class="tip">Auxiliary Carry — acarreo entre el nibble bajo y el alto (bit 3→4). Usado internamente por DAA para aritmética BCD.</div></div>
+            <div class="flag" id="flagP"><div class="name">P</div><div class="val">0</div><div class="tip">Parity — se activa cuando el número de bits en 1 del resultado es par.</div></div>
+            <div class="flag" id="flagCY"><div class="name">CY</div><div class="val">0</div><div class="tip">Carry — acarreo o préstamo fuera del bit 7 en operaciones aritméticas de 8 bits.</div></div>
+          </div>
+          <div class="cpu-state">
+            <span class="pill" id="statePill">LISTO</span>
+            <span class="pill" id="cyclePill">0 ciclos</span>
+            <span class="pill" id="instrPill">0 instrucciones</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel fpu-panel">
+        <div class="panel-head"><h2>FPU · <b>pila ST0–ST7</b></h2><span class="tag fpu">coprocesador</span></div>
+        <div class="panel-body">
+          <div class="st-stack" id="stStack"></div>
+          <div class="fpu-flags">
+            <div class="f" id="fC0">C0</div>
+            <div class="f" id="fC2">C2</div>
+            <div class="f" id="fC3">C3</div>
+            <div class="f" id="fZD">÷0</div>
+            <div class="f" id="fSF">SF</div>
+          </div>
+          <div class="fpu-last">Última operación: <b id="fpuLastOp">FINIT</b></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>MEMORIA · <b>mapa RAM</b></h2><span class="tag">64 KB</span></div>
+        <div class="panel-body">
+          <div class="mem-controls">
+            <input type="text" id="memAddr" placeholder="0000" maxlength="4">
+            <button id="btnMemGo">Ir</button>
+          </div>
+          <div id="memview"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>PILA · <b>stack view (SP)</b></h2></div>
+        <div class="panel-body"><div id="stackview"></div></div>
+      </div>
+
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  Basado en <a href="https://github.com/alexeiiw/8080" target="_blank" rel="noopener">alexeiiw/8080</a> (Intel 8080 CPU Emulator &amp; Assembler). Licencia MIT.
+</footer>
+
+<script>
+/* motor: CPU 8080, FPU (coprocesador) y ensamblador */
+(function (global) {
+  "use strict";
+  var RP2N_dummy = 0;
+
+  var FLAG_S = 0x80, FLAG_Z = 0x40, FLAG_AC = 0x10, FLAG_P = 0x04, FLAG_1 = 0x02, FLAG_CY = 0x01;
+
+  var FPU_OP = {
+    0x08: "FINIT", 0x10: "FLD", 0x18: "FSTP", 0x20: "FADD",
+    0x28: "FSUB", 0x30: "FMUL", 0x38: "FDIV", 0xCB: "FCHS",
+    0xD9: "FSQRT", 0xDD: "FCOMP", 0xED: "FST", 0xFD: "FABS"
+  };
+  var FPU_OPERAND16 = { FLD: 1, FST: 1, FSTP: 1 };
+
+  function parity(v) { v &= 0xFF; var p = 0; for (var i = 0; i < 8; i++) p ^= (v >> i) & 1; return p === 0; }
+  function hex16(v) { return v.toString(16).toUpperCase().padStart(4, "0"); }
+  function hex8(v) { return v.toString(16).toUpperCase().padStart(2, "0"); }
+
+  function CPU8080(mem, fpu, io) {
+    this.mem = mem; this.fpu = fpu; this.io = io || { out: function(){}, in: function(){return 0;} };
+    this.reset();
+  }
+  CPU8080.prototype.reset = function () {
+    this.A=0;this.B=0;this.C=0;this.D=0;this.E=0;this.H=0;this.L=0;this.F=FLAG_1;
+    this.SP=0xFFFF;this.PC=0;this.halted=false;this.interruptsEnabled=false;
+    this.cycles=0;this.instructionsExecuted=0;this.lastOp="";
+    if (this.fpu) this.fpu.reset();
+  };
+  CPU8080.prototype.readMem8=function(a){return this.mem[a&0xFFFF];};
+  CPU8080.prototype.writeMem8=function(a,v){this.mem[a&0xFFFF]=v&0xFF;};
+  CPU8080.prototype.fetch8=function(){var v=this.mem[this.PC&0xFFFF];this.PC=(this.PC+1)&0xFFFF;return v;};
+  CPU8080.prototype.fetch16=function(){var lo=this.fetch8();var hi=this.fetch8();return (hi<<8)|lo;};
+  CPU8080.prototype.getReg=function(code){
+    switch(code){case 0:return this.B;case 1:return this.C;case 2:return this.D;case 3:return this.E;
+      case 4:return this.H;case 5:return this.L;case 6:return this.readMem8((this.H<<8)|this.L);case 7:return this.A;}
+  };
+  CPU8080.prototype.setReg=function(code,v){
+    v&=0xFF;
+    switch(code){case 0:this.B=v;break;case 1:this.C=v;break;case 2:this.D=v;break;case 3:this.E=v;break;
+      case 4:this.H=v;break;case 5:this.L=v;break;case 6:this.writeMem8((this.H<<8)|this.L,v);break;case 7:this.A=v;break;}
+  };
+  CPU8080.prototype.getRP=function(p){
+    switch(p){case 0:return (this.B<<8)|this.C;case 1:return (this.D<<8)|this.E;case 2:return (this.H<<8)|this.L;case 3:return this.SP;}
+  };
+  CPU8080.prototype.setRP=function(p,v){
+    v&=0xFFFF;
+    switch(p){case 0:this.B=v>>8;this.C=v&0xFF;break;case 1:this.D=v>>8;this.E=v&0xFF;break;
+      case 2:this.H=v>>8;this.L=v&0xFF;break;case 3:this.SP=v;break;}
+  };
+  CPU8080.prototype.testCC=function(y){
+    switch(y){case 0:return !(this.F&FLAG_Z);case 1:return !!(this.F&FLAG_Z);case 2:return !(this.F&FLAG_CY);
+      case 3:return !!(this.F&FLAG_CY);case 4:return !(this.F&FLAG_P);case 5:return !!(this.F&FLAG_P);
+      case 6:return !(this.F&FLAG_S);case 7:return !!(this.F&FLAG_S);}
+  };
+  CPU8080.prototype.setSZP=function(v){
+    v&=0xFF; this.F=(this.F&~(FLAG_S|FLAG_Z|FLAG_P));
+    if(v&0x80)this.F|=FLAG_S; if(v===0)this.F|=FLAG_Z; if(parity(v))this.F|=FLAG_P;
+  };
+  CPU8080.prototype.push16=function(v){
+    this.SP=(this.SP-1)&0xFFFF; this.writeMem8(this.SP,(v>>8)&0xFF);
+    this.SP=(this.SP-1)&0xFFFF; this.writeMem8(this.SP,v&0xFF);
+  };
+  CPU8080.prototype.pop16=function(){
+    var lo=this.readMem8(this.SP); this.SP=(this.SP+1)&0xFFFF;
+    var hi=this.readMem8(this.SP); this.SP=(this.SP+1)&0xFFFF;
+    return (hi<<8)|lo;
+  };
+  CPU8080.prototype.doAdd=function(val,useCarry){
+    var cin=(useCarry&&(this.F&FLAG_CY))?1:0; var a=this.A; var res=a+val+cin;
+    var ac=((a&0xF)+(val&0xF)+cin)>0xF;
+    this.F=(this.F&~FLAG_CY)|(res>0xFF?FLAG_CY:0);
+    this.F=(this.F&~FLAG_AC)|(ac?FLAG_AC:0);
+    this.A=res&0xFF; this.setSZP(this.A);
+  };
+  CPU8080.prototype.doSub=function(val,useCarry){
+    var cin=(useCarry&&(this.F&FLAG_CY))?1:0; var a=this.A; var v2=(val+cin)&0x1FF; var res=a-v2;
+    var ac=((a&0xF)-(val&0xF)-cin)<0;
+    this.F=(this.F&~FLAG_CY)|(res<0?FLAG_CY:0);
+    this.F=(this.F&~FLAG_AC)|(ac?0:FLAG_AC);
+    this.A=res&0xFF; this.setSZP(this.A);
+  };
+  CPU8080.prototype.doCmp=function(val){
+    var a=this.A; var res=a-val; var ac=((a&0xF)-(val&0xF))<0;
+    this.F=(this.F&~FLAG_CY)|(res<0?FLAG_CY:0);
+    this.F=(this.F&~FLAG_AC)|(ac?0:FLAG_AC);
+    this.setSZP(res&0xFF);
+  };
+  CPU8080.prototype.doAna=function(val){
+    var res=this.A&val; this.F=(this.F&~FLAG_CY)|(((this.A|val)&0x08)?FLAG_AC:0);
+    this.F&=~FLAG_CY; this.A=res&0xFF; this.setSZP(this.A);
+  };
+  CPU8080.prototype.doXra=function(val){ this.A=(this.A^val)&0xFF; this.F&=~(FLAG_CY|FLAG_AC); this.setSZP(this.A); };
+  CPU8080.prototype.doOra=function(val){ this.A=(this.A|val)&0xFF; this.F&=~(FLAG_CY|FLAG_AC); this.setSZP(this.A); };
+  CPU8080.prototype.doInr=function(v){
+    var res=(v+1)&0xFF; this.F=(this.F&~FLAG_AC)|(((v&0xF)+1>0xF)?FLAG_AC:0); this.setSZP(res); return res;
+  };
+  CPU8080.prototype.doDcr=function(v){
+    var res=(v-1)&0xFF; this.F=(this.F&~FLAG_AC)|(((v&0xF)===0)?0:FLAG_AC); this.setSZP(res); return res;
+  };
+  CPU8080.prototype.doDaa=function(){
+    var a=this.A, cy=!!(this.F&FLAG_CY), ac=!!(this.F&FLAG_AC); var corr=0;
+    if((a&0x0F)>9||ac) corr|=0x06;
+    if((a>>4)>9||cy||((a>>4)>=9&&(a&0x0F)>9)){ corr|=0x60; cy=true; }
+    var lowCarry=((a&0x0F)+(corr&0x0F))>0x0F;
+    a=(a+corr)&0xFF;
+    this.F=(this.F&~FLAG_AC); if(lowCarry) this.F|=FLAG_AC;
+    this.F=(this.F&~FLAG_CY)|(cy?FLAG_CY:0);
+    this.A=a; this.setSZP(this.A);
+  };
+  CPU8080.prototype.runAlu=function(y,val){
+    switch(y){case 0:this.doAdd(val,false);break;case 1:this.doAdd(val,true);break;case 2:this.doSub(val,false);break;
+      case 3:this.doSub(val,true);break;case 4:this.doAna(val);break;case 5:this.doXra(val);break;
+      case 6:this.doOra(val);break;case 7:this.doCmp(val);break;}
+  };
+  CPU8080.prototype.step=function(){
+    if(this.halted) return 0;
+    var op=this.fetch8();
+    if(FPU_OP.hasOwnProperty(op)){
+      var mnem=FPU_OP[op]; var addr=null;
+      if(FPU_OPERAND16[mnem]) addr=this.fetch16();
+      this.fpu.execute(mnem,this,addr);
+      this.lastOp=mnem+(addr!==null?" "+hex16(addr):"");
+      this.cycles+=8; this.instructionsExecuted++;
+      return 8;
+    }
+    var x=(op>>6)&3, y=(op>>3)&7, z=op&7, p=y>>1, q=y&1; var t=4;
+    this.lastOp="0x"+hex8(op);
+    if(x===0){
+      if(z===0){ t=4; }
+      else if(z===1){
+        if(q===0){ this.setRP(p,this.fetch16()); t=10; }
+        else { var hl=this.getRP(2), rp=this.getRP(p), res=hl+rp;
+          this.F=(this.F&~FLAG_CY)|(res>0xFFFF?FLAG_CY:0); this.setRP(2,res&0xFFFF); t=10; }
+      } else if(z===2){
+        if(q===0){
+          if(p===0){ this.writeMem8(this.getRP(0),this.A); t=7; }
+          else if(p===1){ this.writeMem8(this.getRP(1),this.A); t=7; }
+          else if(p===2){ var a=this.fetch16(); this.writeMem8(a,this.L); this.writeMem8(a+1,this.H); t=16; }
+          else { var a2=this.fetch16(); this.writeMem8(a2,this.A); t=13; }
+        } else {
+          if(p===0){ this.A=this.readMem8(this.getRP(0)); t=7; }
+          else if(p===1){ this.A=this.readMem8(this.getRP(1)); t=7; }
+          else if(p===2){ var a3=this.fetch16(); this.L=this.readMem8(a3); this.H=this.readMem8(a3+1); t=16; }
+          else { var a4=this.fetch16(); this.A=this.readMem8(a4); t=13; }
+        }
+      } else if(z===3){ var v=this.getRP(p); this.setRP(p,(q===0?v+1:v-1)&0xFFFF); t=5; }
+      else if(z===4){ this.setReg(y,this.doInr(this.getReg(y))); t=(y===6?10:5); }
+      else if(z===5){ this.setReg(y,this.doDcr(this.getReg(y))); t=(y===6?10:5); }
+      else if(z===6){ this.setReg(y,this.fetch8()); t=(y===6?10:7); }
+      else if(z===7){
+        switch(y){
+          case 0:{var c=(this.A&0x80)?1:0; this.A=((this.A<<1)|c)&0xFF; this.F=(this.F&~FLAG_CY)|c; break;}
+          case 1:{var c1=this.A&1; this.A=((this.A>>1)|(c1<<7))&0xFF; this.F=(this.F&~FLAG_CY)|c1; break;}
+          case 2:{var oc=(this.F&FLAG_CY)?1:0,nc=(this.A&0x80)?1:0; this.A=((this.A<<1)|oc)&0xFF; this.F=(this.F&~FLAG_CY)|nc; break;}
+          case 3:{var oc2=(this.F&FLAG_CY)?1:0,nc2=this.A&1; this.A=((this.A>>1)|(oc2<<7))&0xFF; this.F=(this.F&~FLAG_CY)|nc2; break;}
+          case 4: this.doDaa(); break;
+          case 5: this.A=(~this.A)&0xFF; break;
+          case 6: this.F|=FLAG_CY; break;
+          case 7: this.F=(this.F&~FLAG_CY)|((this.F&FLAG_CY)?0:FLAG_CY); break;
+        }
+        t=4;
+      }
+    } else if(x===1){
+      if(y===6&&z===6){ this.halted=true; t=7; }
+      else { this.setReg(y,this.getReg(z)); t=(y===6||z===6)?7:5; }
+    } else if(x===2){ this.runAlu(y,this.getReg(z)); t=(z===6)?7:4; }
+    else {
+      if(z===0){ if(this.testCC(y)){ this.PC=this.pop16(); t=11; } else t=5; }
+      else if(z===1){
+        if(q===0){
+          var pv=this.pop16();
+          if(p===3){ this.A=(pv>>8)&0xFF; this.F=(pv&0xFF)|FLAG_1; this.F&=~0x28; }
+          else this.setRP(p,pv);
+          t=10;
+        } else {
+          if(p===0){ this.PC=this.pop16(); t=10; }
+          else if(p===2){ this.PC=this.getRP(2); t=5; }
+          else if(p===3){ this.SP=this.getRP(2); t=5; }
+        }
+      } else if(z===2){ var addr2=this.fetch16(); if(this.testCC(y)) this.PC=addr2; t=10; }
+      else if(z===3){
+        switch(y){
+          case 0: this.PC=this.fetch16(); t=10; break;
+          case 2: this.io.out(this.fetch8(),this.A); t=10; break;
+          case 3: this.A=this.io.in(this.fetch8()); t=10; break;
+          case 4:{ var hlv=this.getRP(2); var sp0=this.readMem8(this.SP),sp1=this.readMem8(this.SP+1);
+            this.writeMem8(this.SP,hlv&0xFF); this.writeMem8(this.SP+1,(hlv>>8)&0xFF); this.L=sp0; this.H=sp1; t=18; break; }
+          case 5:{ var hh=this.H,ll=this.L; this.H=this.D; this.L=this.E; this.D=hh; this.E=ll; t=4; break; }
+          case 6: this.interruptsEnabled=false; t=4; break;
+          case 7: this.interruptsEnabled=true; t=4; break;
+        }
+      } else if(z===4){ var addr3=this.fetch16(); if(this.testCC(y)){ this.push16(this.PC); this.PC=addr3; t=17; } else t=11; }
+      else if(z===5){
+        if(q===0){ if(p===3){ this.push16(((this.A<<8)|this.F)&0xFFFF); } else this.push16(this.getRP(p)); t=11; }
+        else if(p===0){ var a5=this.fetch16(); this.push16(this.PC); this.PC=a5; t=17; }
+      } else if(z===6){ this.runAlu(y,this.fetch8()); t=7; }
+      else if(z===7){ this.push16(this.PC); this.PC=y*8; t=11; }
+    }
+    this.cycles+=t; this.instructionsExecuted++;
+    return t;
+  };
+
+  function FPU8087c(mem){ this.mem=mem; this.reset(); }
+  FPU8087c.prototype.reset=function(){
+    this.stack=[0,0,0,0,0,0,0,0]; this.top=0; this.depth=0;
+    this.C0=false; this.C2=false; this.C3=false; this.zeroDiv=false; this.stackFault=false;
+    this.opsExecuted=0; this.lastOp="FINIT";
+  };
+  FPU8087c.prototype.push=function(v){ if(this.depth>=8){this.stackFault=true;return;} this.top=(this.top-1)&7; this.stack[this.top]=v; this.depth++; };
+  FPU8087c.prototype.pop=function(){ if(this.depth<=0){this.stackFault=true;return 0;} var v=this.stack[this.top]; this.top=(this.top+1)&7; this.depth--; return v; };
+  FPU8087c.prototype.st=function(i){ return this.stack[(this.top+i)&7]; };
+  FPU8087c.prototype.setSt0=function(v){ this.stack[this.top]=v; };
+  FPU8087c.prototype.readFloat=function(addr){
+    var b0=this.mem[addr&0xFFFF],b1=this.mem[(addr+1)&0xFFFF],b2=this.mem[(addr+2)&0xFFFF],b3=this.mem[(addr+3)&0xFFFF];
+    var buf=new ArrayBuffer(4); var dv=new DataView(buf);
+    dv.setUint8(0,b0);dv.setUint8(1,b1);dv.setUint8(2,b2);dv.setUint8(3,b3);
+    return dv.getFloat32(0,true);
+  };
+  FPU8087c.prototype.writeFloat=function(addr,val){
+    var buf=new ArrayBuffer(4); var dv=new DataView(buf); dv.setFloat32(0,val,true);
+    for(var i=0;i<4;i++) this.mem[(addr+i)&0xFFFF]=dv.getUint8(i);
+  };
+  FPU8087c.prototype.execute=function(mnem,cpu,addr){
+    this.stackFault=false; this.lastOp=mnem+(addr!==null?" "+hex16(addr):""); this.opsExecuted++;
+    switch(mnem){
+      case "FINIT": this.stack=[0,0,0,0,0,0,0,0]; this.top=0; this.depth=0; this.C0=this.C2=this.C3=false; this.zeroDiv=false; break;
+      case "FLD": this.push(this.readFloat(addr)); break;
+      case "FST": this.writeFloat(addr,this.st(0)); break;
+      case "FSTP": this.writeFloat(addr,this.pop()); break;
+      case "FADD": { var b=this.pop(),a=this.pop(); this.push(a+b); break; }
+      case "FSUB": { var b2=this.pop(),a2=this.pop(); this.push(a2-b2); break; }
+      case "FMUL": { var b3=this.pop(),a3=this.pop(); this.push(a3*b3); break; }
+      case "FDIV": { var b4=this.pop(),a4=this.pop();
+        if(b4===0){ this.zeroDiv=true; this.push(a4===0?NaN:(a4>0?Infinity:-Infinity)); } else this.push(a4/b4);
+        break; }
+      case "FCHS": this.setSt0(-this.st(0)); break;
+      case "FABS": this.setSt0(Math.abs(this.st(0))); break;
+      case "FSQRT": this.setSt0(Math.sqrt(this.st(0))); break;
+      case "FCOMP": { var x=this.pop(),y2=this.pop(); this.C0=x<y2; this.C3=x===y2; this.C2=false; break; }
+    }
+  };
+  FPU8087c.prototype.status=function(){
+    var regs=[]; for(var i=0;i<8;i++) regs.push(this.depth>i?this.st(i):null);
+    return { regs:regs, top:this.top, depth:this.depth, C0:this.C0, C2:this.C2, C3:this.C3, zeroDiv:this.zeroDiv, stackFault:this.stackFault };
+  };
+
+  var REGN={B:0,C:1,D:2,E:3,H:4,L:5,M:6,A:7};
+  var RPN={B:0,BC:0,D:1,DE:1,H:2,HL:2,SP:3};
+  var RP2N={B:0,BC:0,D:1,DE:1,H:2,HL:2,PSW:3};
+  var CCN={NZ:0,Z:1,NC:2,C:3,PO:4,PE:5,P:6,M:7};
+  var ALUN={ADD:0,ADC:1,SUB:2,SBB:3,ANA:4,XRA:5,ORA:6,CMP:7};
+  var ALUI={ADI:0,ACI:1,SUI:2,SBI:3,ANI:4,XRI:5,ORI:6,CPI:7};
+  var FPU_MNEM_TO_OP={};
+  Object.keys(FPU_OP).forEach(function(k){ FPU_MNEM_TO_OP[FPU_OP[k]]=parseInt(k,10); });
+
+  function AssemblerError(msg,line){ this.message=msg; this.line=line; }
+
+  function Assembler(){}
+  Assembler.prototype.assemble=function(source){
+    var lines=source.split("\n"); var symbols={}; var stmts=[]; var addr=0;
+    for(var i=0;i<lines.length;i++){
+      var raw=lines[i]; var lineNo=i+1; var code=raw.split(";")[0]; code=code.trim();
+      if(!code) continue;
+      var label=null;
+      var m=code.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
+      if(m){ label=m[1]; code=m[2].trim(); }
+      if(label){
+        if(symbols.hasOwnProperty(label)) throw new AssemblerError("Etiqueta duplicada: "+label,lineNo);
+        symbols[label]=addr;
+      }
+      if(!code) continue;
+      var parts=code.match(/^(\S+)\s*(.*)$/);
+      var mnem=parts[1].toUpperCase(); var operandStr=parts[2]||"";
+      var operands=operandStr.length?splitOperands(operandStr):[];
+      if(mnem==="EQU"){ if(!label) throw new AssemblerError("EQU requiere una etiqueta",lineNo); symbols[label]=parseNumber(operands[0]); continue; }
+      if(mnem==="ORG"){ addr=parseNumber(operands[0]); continue; }
+      var size=this.sizeOf(mnem,operands,lineNo);
+      stmts.push({addr:addr,mnem:mnem,operands:operands,raw:raw.trim(),lineNo:lineNo,size:size});
+      addr+=size;
+    }
+    var bytes={}; var maxAddr=0; var self=this; var listing=[];
+    stmts.forEach(function(st){
+      var out=self.encode(st.mnem,st.operands,st.addr,symbols,st.lineNo);
+      for(var k=0;k<out.length;k++){ bytes[(st.addr+k)&0xFFFF]=out[k]; if(st.addr+k>maxAddr) maxAddr=st.addr+k; }
+      listing.push({addr:st.addr,bytes:out,source:st.raw});
+    });
+    return { bytes:bytes, symbols:symbols, listing:listing, maxAddr:maxAddr };
+  };
+  function splitOperands(s){ return s.split(",").map(function(x){return x.trim();}).filter(function(x){return x.length;}); }
+  function parseNumber(tok){
+    if(tok==null) return 0; tok=tok.trim();
+    if(/^[0-9]+$/.test(tok)) return parseInt(tok,10);
+    if(/^0x[0-9A-Fa-f]+$/.test(tok)) return parseInt(tok,16);
+    if(/^[0-9][0-9A-Fa-f]*H$/i.test(tok)) return parseInt(tok.slice(0,-1),16);
+    if(/^'.'$/.test(tok)) return tok.charCodeAt(1);
+    return NaN;
+  }
+  Assembler.prototype.resolve=function(tok,symbols,lineNo){
+    var v=parseNumber(tok); if(!isNaN(v)) return v;
+    if(symbols.hasOwnProperty(tok)) return symbols[tok];
+    var m=tok.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*([+-])\s*([0-9]+)$/);
+    if(m&&symbols.hasOwnProperty(m[1])){ var base=symbols[m[1]]; return m[2]==="+"?base+parseInt(m[3],10):base-parseInt(m[3],10); }
+    throw new AssemblerError("Símbolo no definido: "+tok,lineNo);
+  };
+  Assembler.prototype.sizeOf=function(mnem,ops,lineNo){
+    if(FPU_MNEM_TO_OP.hasOwnProperty(mnem)) return FPU_OPERAND16[mnem]?3:1;
+    if(mnem==="DB") return ops.length||1;
+    if(mnem==="DW") return 2*(ops.length||1);
+    if(mnem==="DF") return 4*(ops.length||1);
+    if(mnem==="DS") return parseNumber(ops[0])||0;
+    if(["NOP","HLT","RLC","RRC","RAL","RAR","DAA","CMA","STC","CMC","XCHG","XTHL","SPHL","PCHL","RET","EI","DI"].indexOf(mnem)>=0) return 1;
+    if(mnem==="MOV") return 1; if(mnem==="MVI") return 2; if(mnem==="LXI") return 3;
+    if(ALUN.hasOwnProperty(mnem)) return 1; if(ALUI.hasOwnProperty(mnem)) return 2;
+    if(["INR","DCR","INX","DCX","DAD","STAX","LDAX","PUSH","POP"].indexOf(mnem)>=0) return 1;
+    if(["LDA","STA","LHLD","SHLD","JMP","CALL"].indexOf(mnem)>=0) return 3;
+    if(/^J[A-Z]{1,2}$/.test(mnem)||/^C[A-Z]{1,2}$/.test(mnem)) return 3;
+    if(/^R[A-Z]{1,2}$/.test(mnem)&&mnem!=="RET") return 1;
+    if(mnem==="RST") return 1; if(mnem==="IN"||mnem==="OUT") return 2;
+    throw new AssemblerError("Instrucción desconocida: "+mnem,lineNo);
+  };
+  Assembler.prototype.encode=function(mnem,ops,addr,symbols,lineNo){
+    var self=this;
+    function reg(tok){ tok=tok.toUpperCase(); if(!REGN.hasOwnProperty(tok)) throw new AssemblerError("Registro inválido: "+tok,lineNo); return REGN[tok]; }
+    function rp(tok){ tok=tok.toUpperCase(); if(!RPN.hasOwnProperty(tok)) throw new AssemblerError("Par inválido: "+tok,lineNo); return RPN[tok]; }
+    function rp2(tok){ tok=tok.toUpperCase(); if(!RP2N.hasOwnProperty(tok)) throw new AssemblerError("Par inválido: "+tok,lineNo); return RP2N[tok]; }
+    function val8(tok){ return self.resolve(tok,symbols,lineNo)&0xFF; }
+    function val16(tok){ return self.resolve(tok,symbols,lineNo)&0xFFFF; }
+    function lo(v){ return v&0xFF; } function hi(v){ return (v>>8)&0xFF; }
+    if(FPU_MNEM_TO_OP.hasOwnProperty(mnem)){
+      var opc=FPU_MNEM_TO_OP[mnem];
+      if(FPU_OPERAND16[mnem]){ var a=val16(ops[0]); return [opc,lo(a),hi(a)]; }
+      return [opc];
+    }
+    switch(mnem){
+      case "NOP": return [0x00]; case "HLT": return [0x76];
+      case "RLC": return [0x07]; case "RRC": return [0x0F]; case "RAL": return [0x17]; case "RAR": return [0x1F];
+      case "DAA": return [0x27]; case "CMA": return [0x2F]; case "STC": return [0x37]; case "CMC": return [0x3F];
+      case "XCHG": return [0xEB]; case "XTHL": return [0xE3]; case "SPHL": return [0xF9]; case "PCHL": return [0xE9];
+      case "RET": return [0xC9]; case "EI": return [0xFB]; case "DI": return [0xF3];
+      case "MOV": return [0x40+reg(ops[0])*8+reg(ops[1])];
+      case "MVI": return [0x06+reg(ops[0])*8, val8(ops[1])];
+      case "LXI": { var v=val16(ops[1]); return [0x01+rp(ops[0])*16, lo(v), hi(v)]; }
+      case "INR": return [0x04+reg(ops[0])*8]; case "DCR": return [0x05+reg(ops[0])*8];
+      case "INX": return [0x03+rp(ops[0])*16]; case "DCX": return [0x0B+rp(ops[0])*16]; case "DAD": return [0x09+rp(ops[0])*16];
+      case "STAX": { var r=ops[0].toUpperCase(); if(r!=="B"&&r!=="D"&&r!=="BC"&&r!=="DE") throw new AssemblerError("STAX solo admite B o D",lineNo); return [r[0]==="B"?0x02:0x12]; }
+      case "LDAX": { var r2=ops[0].toUpperCase(); if(r2!=="B"&&r2!=="D"&&r2!=="BC"&&r2!=="DE") throw new AssemblerError("LDAX solo admite B o D",lineNo); return [r2[0]==="B"?0x0A:0x1A]; }
+      case "PUSH": return [0xC5+rp2(ops[0])*16]; case "POP": return [0xC1+rp2(ops[0])*16];
+      case "LDA": { var a2=val16(ops[0]); return [0x3A, lo(a2), hi(a2)]; }
+      case "STA": { var a3=val16(ops[0]); return [0x32, lo(a3), hi(a3)]; }
+      case "LHLD": { var a4=val16(ops[0]); return [0x2A, lo(a4), hi(a4)]; }
+      case "SHLD": { var a5=val16(ops[0]); return [0x22, lo(a5), hi(a5)]; }
+      case "JMP": { var a6=val16(ops[0]); return [0xC3, lo(a6), hi(a6)]; }
+      case "CALL": { var a7=val16(ops[0]); return [0xCD, lo(a7), hi(a7)]; }
+      case "RST": return [0xC7+parseNumber(ops[0])*8];
+      case "IN": return [0xDB, val8(ops[0])]; case "OUT": return [0xD3, val8(ops[0])];
+      case "DB": return ops.map(function(o){ if(/^".*"$/.test(o)) return o.charCodeAt(1); return val8(o); });
+      case "DW": { var out=[]; ops.forEach(function(o){ var v2=val16(o); out.push(lo(v2),hi(v2)); }); return out; }
+      case "DF": { var out2=[]; ops.forEach(function(o){ var f=parseFloat(o); var buf=new ArrayBuffer(4); var dv=new DataView(buf); dv.setFloat32(0,f,true); for(var i=0;i<4;i++) out2.push(dv.getUint8(i)); }); return out2; }
+      case "DS": { var n=parseNumber(ops[0])||0; var arr=[]; for(var i2=0;i2<n;i2++) arr.push(0); return arr; }
+    }
+    if(ALUN.hasOwnProperty(mnem)) return [0x80+ALUN[mnem]*8+reg(ops[0])];
+    if(ALUI.hasOwnProperty(mnem)) return [0xC6+ALUI[mnem]*8, val8(ops[0])];
+    var jm=mnem.match(/^J([A-Z]{1,2})$/); if(jm&&CCN.hasOwnProperty(jm[1])){ var a8=val16(ops[0]); return [0xC2+CCN[jm[1]]*8, lo(a8), hi(a8)]; }
+    var cm=mnem.match(/^C([A-Z]{1,2})$/); if(cm&&CCN.hasOwnProperty(cm[1])){ var a9=val16(ops[0]); return [0xC4+CCN[cm[1]]*8, lo(a9), hi(a9)]; }
+    var rm=mnem.match(/^R([A-Z]{1,2})$/); if(rm&&CCN.hasOwnProperty(rm[1])) return [0xC0+CCN[rm[1]]*8];
+    throw new AssemblerError("Instrucción desconocida: "+mnem,lineNo);
+  };
+
+  global.Core = { CPU8080:CPU8080, FPU8087c:FPU8087c, Assembler:Assembler, AssemblerError:AssemblerError, FPU_OP:FPU_OP, hex16:hex16, hex8:hex8 };
+})(window);
+</script>
+
+<script>
+/* conexión con la interfaz */
+(function(){
+  "use strict";
+  var Core = window.Core;
+  var mem = new Uint8Array(65536);
+  var io = {
+    out: function(port, val){
+      if(port === 1) logLine(String.fromCharCode(val), "op-sys");
+      else if(port === 2) logLine("OUT["+port+"] = "+val, "op-sys");
+    },
+    in: function(port){ return 0; }
+  };
+  var fpu = new Core.FPU8087c(mem);
+  var cpu = new Core.CPU8080(mem, fpu, io);
+  var asm = new Core.Assembler();
+  var lastAssembled = null;
+  var running = false;
+  var runTimer = null;
+  var memViewBase = 0x0000;
+
+  var el = {};
+  ["editor","btnAssemble","btnRun","btnStep","btnPause","btnReset","btnClear","speedRange",
+   "console","regA","regB","regC","regD","regE","regH","regL","regF","regPC","regSP",
+   "flagS","flagZ","flagAC","flagP","flagCY","statePill","cyclePill","instrPill",
+   "stStack","fC0","fC2","fC3","fZD","fSF","fpuLastOp","memAddr","btnMemGo","memview",
+   "stackview","exampleSelect"].forEach(function(id){ el[id] = document.getElementById(id); });
+
+  function logLine(text, cls){
+    var d = document.createElement("div");
+    if(cls) d.className = cls;
+    d.textContent = text;
+    el.console.appendChild(d);
+    el.console.scrollTop = el.console.scrollHeight;
+  }
+  function clearLog(){ el.console.innerHTML = ""; }
+
+  /* ---------------- examples ---------------- */
+  var EXAMPLES = {
+fpu_circulo:
+`; area de un circulo: A = PI * r^2
+; el 8080 controla el flujo, el FPU hace la aritmetica
+        ORG 0000H
+PI:     DF 3.14159
+RADIO:  DF 4.0
+AREA:   DF 0.0
+CONT:   DB 0
+
+        ORG 0020H
+START:  MVI A, 0
+        STA CONT        ; contador del 8080, para el ejemplo
+
+        FLD RADIO        ; ST0 = r
+        FLD RADIO        ; ST0 = r, ST1 = r
+        FMUL             ; r*r
+        FLD PI
+        FMUL             ; PI*r*r
+        FSTP AREA        ; guarda el resultado y desapila
+
+        LDA CONT
+        INR A
+        STA CONT
+        HLT`,
+
+fpu_promedio:
+`; promedio de tres numeros
+        ORG 0000H
+N1:     DF 12.5
+N2:     DF 7.25
+N3:     DF 10.0
+PROM:   DF 0.0
+TRES:   DF 3.0
+
+        ORG 0020H
+START:  FLD N1
+        FLD N2
+        FADD             ; ST0 = N1+N2
+        FLD N3
+        FADD             ; ST0 = N1+N2+N3
+        FLD TRES
+        FDIV             ; ST0 = (N1+N2+N3) / 3   [ST1 / ST0]
+        FSTP PROM
+        HLT`,
+
+fpu_pitagoras:
+`; hipotenusa: c = sqrt(a^2 + b^2)
+        ORG 0000H
+LADO_A: DF 3.0
+LADO_B: DF 4.0
+HIPOT:  DF 0.0
+
+        ORG 0020H
+START:  FLD LADO_A
+        FLD LADO_A
+        FMUL             ; a*a
+        FLD LADO_B
+        FLD LADO_B
+        FMUL             ; b*b
+        FADD             ; a*a + b*b
+        FSQRT            ; sqrt(a*a+b*b)
+        FSTP HIPOT
+        HLT`,
+
+cpu_bucle:
+`; ejemplo solo con CPU, sin FPU: suma 5+4+3+2+1 en un bucle
+        ORG 0000H
+        MVI B, 5
+        MVI A, 0
+LOOP:   ADD B
+        DCR B
+        JNZ LOOP
+        STA 2000H
+        HLT`,
+
+cpu_daa:
+`; ejemplo solo con CPU: suma BCD usando DAA (15 + 27 = 42)
+        ORG 0000H
+        MVI A, 0x15
+        MVI B, 0x27
+        ADD B
+        DAA
+        STA 2000H
+        HLT`
+  };
+
+  function loadExample(key){
+    el.editor.value = EXAMPLES[key] || "";
+  }
+
+  /* ---------------- assemble / run ---------------- */
+  function doAssemble(){
+    clearLog();
+    mem.fill(0);
+    try {
+      var result = asm.assemble(el.editor.value);
+      lastAssembled = result;
+      for(var addr in result.bytes) mem[addr] = result.bytes[addr];
+      cpu.reset();
+      cpu.PC = result.symbols.hasOwnProperty("START") ? result.symbols.START : 0;
+      logLine("Ensamblado correcto — " + Object.keys(result.bytes).length + " bytes escritos. PC inicial = " + Core.hex16(cpu.PC) + "H", "op-sys");
+      renderAll();
+    } catch(e) {
+      lastAssembled = null;
+      if(e instanceof Core.AssemblerError) logLine("Error (línea " + e.line + "): " + e.message, "op-err");
+      else logLine("Error: " + e.message, "op-err");
+    }
+  }
+
+  function doStep(){
+    if(!lastAssembled){ doAssemble(); if(!lastAssembled) return; }
+    if(cpu.halted){ logLine("CPU detenida (HLT). Pulsa Reset CPU para reiniciar.", "op-sys"); return; }
+    var isFpu = Core.FPU_OP.hasOwnProperty(mem[cpu.PC]);
+    cpu.step();
+    if(isFpu) logLine("FPU " + fpu.lastOp + "  →  ST0=" + fmtFloat(fpu.depth>0?fpu.st(0):0), "op-fpu");
+    renderAll();
+  }
+
+  function doRun(){
+    if(!lastAssembled){ doAssemble(); if(!lastAssembled) return; }
+    if(cpu.halted){ logLine("CPU detenida (HLT). Pulsa Reset CPU para reiniciar.", "op-sys"); return; }
+    running = true;
+    scheduleRun();
+  }
+  function scheduleRun(){
+    if(!running) return;
+    var stepsPerTick = parseInt(el.speedRange.value, 10);
+    for(var i = 0; i < stepsPerTick && running && !cpu.halted; i++){
+      var isFpu = Core.FPU_OP.hasOwnProperty(mem[cpu.PC]);
+      cpu.step();
+      if(isFpu) logLine("FPU " + fpu.lastOp + "  →  ST0=" + fmtFloat(fpu.depth>0?fpu.st(0):0), "op-fpu");
+    }
+    renderAll();
+    if(cpu.halted){ running = false; logLine("Programa detenido (HLT).", "op-sys"); return; }
+    runTimer = requestAnimationFrame(scheduleRun);
+  }
+  function doPause(){ running = false; if(runTimer) cancelAnimationFrame(runTimer); renderAll(); }
+  function doReset(){
+    running = false; if(runTimer) cancelAnimationFrame(runTimer);
+    cpu.reset();
+    if(lastAssembled) cpu.PC = lastAssembled.symbols.hasOwnProperty("START") ? lastAssembled.symbols.START : 0;
+    mem.fill(0);
+    if(lastAssembled) for(var addr in lastAssembled.bytes) mem[addr] = lastAssembled.bytes[addr];
+    logLine("CPU y memoria reiniciados.", "op-sys");
+    renderAll();
+  }
+  function doClear(){ el.editor.value = ""; running = false; if(runTimer) cancelAnimationFrame(runTimer); lastAssembled = null; clearLog(); }
+
+
+  function fmtFloat(v){
+    if(v === null || v === undefined) return "—";
+    if(!isFinite(v)) return v > 0 ? "+INF" : (v < 0 ? "-INF" : "NaN");
+    if(Number.isNaN(v)) return "NaN";
+    return v.toFixed(5);
+  }
+
+  /* ---------------- rendering ---------------- */
+  function renderAll(){
+    var s = cpu.status();
+    el.regA.textContent = Core.hex8(s.A); el.regB.textContent = Core.hex8(s.B);
+    el.regC.textContent = Core.hex8(s.C); el.regD.textContent = Core.hex8(s.D);
+    el.regE.textContent = Core.hex8(s.E); el.regH.textContent = Core.hex8(s.H);
+    el.regL.textContent = Core.hex8(s.L); el.regF.textContent = Core.hex8(s.F);
+    el.regPC.textContent = Core.hex16(s.PC); el.regSP.textContent = Core.hex16(s.SP);
+
+    setFlag(el.flagS, s.flags.S); setFlag(el.flagZ, s.flags.Z); setFlag(el.flagAC, s.flags.AC);
+    setFlag(el.flagP, s.flags.P); setFlag(el.flagCY, s.flags.CY);
+
+    el.statePill.textContent = cpu.halted ? "HALTED" : (running ? "EJECUTANDO" : "PAUSADO");
+    el.statePill.className = "pill " + (cpu.halted ? "halt" : (running ? "run" : ""));
+    el.cyclePill.textContent = cpu.cycles + " ciclos";
+    el.instrPill.textContent = cpu.instructionsExecuted + " instrucciones";
+
+    renderFpu();
+    renderMem();
+    renderStack();
+  }
+  function setFlag(node, isSet){
+    node.classList.toggle("set", isSet);
+    node.querySelector(".val").textContent = isSet ? "1" : "0";
+  }
+  function renderFpu(){
+    var st = fpu.status();
+    el.stStack.innerHTML = "";
+    for(var i = 0; i < 8; i++){
+      var row = document.createElement("div");
+      row.className = "st-reg" + (i === 0 ? " top" : "") + (st.regs[i] === null ? " empty" : "");
+      var idx = document.createElement("span"); idx.className = "idx"; idx.textContent = "ST" + i;
+      var v = document.createElement("span"); v.className = "v"; v.textContent = st.regs[i] === null ? "vacío" : fmtFloat(st.regs[i]);
+      row.appendChild(idx); row.appendChild(v);
+      el.stStack.appendChild(row);
+    }
+    el.fC0.classList.toggle("set", st.C0); el.fC2.classList.toggle("set", st.C2); el.fC3.classList.toggle("set", st.C3);
+    el.fZD.classList.toggle("set", st.zeroDiv); el.fSF.classList.toggle("set", st.stackFault);
+    el.fpuLastOp.textContent = fpu.lastOp;
+  }
+  function renderMem(){
+    var base = memViewBase - (memViewBase % 16);
+    var rows = 12;
+    var html = "<table><tr><td></td>";
+    for(var c = 0; c < 16; c++) html += "<td class='addr' style='text-align:center;color:#565d67'>" + c.toString(16).toUpperCase() + "</td>";
+    html += "</tr>";
+    var pcAddr = cpu.PC, spAddr = cpu.SP;
+    for(var r = 0; r < rows; r++){
+      var rowAddr = (base + r * 16) & 0xFFFF;
+      html += "<tr><td class='addr'>" + Core.hex16(rowAddr) + "</td>";
+      for(var c2 = 0; c2 < 16; c2++){
+        var a = (rowAddr + c2) & 0xFFFF;
+        var v = mem[a];
+        var cls = "byte" + (a === pcAddr ? " pc" : (a === spAddr ? " sp" : (v !== 0 ? " nz" : "")));
+        html += "<td class='" + cls + "'>" + Core.hex8(v) + "</td>";
+      }
+      html += "</tr>";
+    }
+    html += "</table>";
+    el.memview.innerHTML = html;
+  }
+  function renderStack(){
+    var html = "";
+    var sp = cpu.SP;
+    var top = Math.max(0, sp - 2);
+    var bottom = Math.min(0xFFFF, sp + 10);
+    for(var a = top; a <= bottom; a += 2){
+      var lo = mem[a], hi = mem[(a + 1) & 0xFFFF];
+      var word = (hi << 8) | lo;
+      html += "<div class='row" + (a === sp ? " sp" : "") + "'><span class='a'>" + Core.hex16(a) + (a === sp ? " ← SP" : "") + "</span><span>" + Core.hex16(word) + "</span></div>";
+    }
+    el.stackview.innerHTML = html;
+  }
+
+  /* ---------------- events ---------------- */
+  el.btnAssemble.addEventListener("click", doAssemble);
+  el.btnRun.addEventListener("click", doRun);
+  el.btnStep.addEventListener("click", doStep);
+  el.btnPause.addEventListener("click", doPause);
+  el.btnReset.addEventListener("click", doReset);
+  el.btnClear.addEventListener("click", doClear);
+  el.btnMemGo.addEventListener("click", function(){
+    var v = parseInt(el.memAddr.value, 16);
+    if(!isNaN(v)) memViewBase = v & 0xFFFF;
+    renderMem();
+  });
+  el.exampleSelect.addEventListener("change", function(){ loadExample(el.exampleSelect.value); doAssemble(); });
+
+  loadExample("fpu_circulo");
+  doAssemble();
+})();
+</script>
+</body>
+</html>
